@@ -30,6 +30,23 @@ PRIORITY_REQUIRED_STATUSES = config.get('priority_required_statuses', [])
 STATUS_PRIORITIES = config.get('status_priorities', [])
 
 
+def classify_bugs(all_bugs, required_statuses):
+    """Separate bugs into those needing triage and those already triaged.
+    """
+    triaged_bugs = []
+    triage_needed_bugs = []
+
+    for bug in all_bugs:
+        if (bug['status'] == 'New'
+            or (bug['importance'] == 'Undecided'
+                and bug['status'] in required_statuses)):
+            triage_needed_bugs.append(bug)
+        else:
+            triaged_bugs.append(bug)
+
+    return triaged_bugs, triage_needed_bugs
+
+
 @aiohttp_jinja2.template('template.html')
 async def index(request):
     ironic_bugs = {}
@@ -64,33 +81,22 @@ async def index(request):
     ironic_bugs['all'] = [x for x in ironic_bugs['all']
                           if x['importance'] != 'Wishlist']
 
-    nova_triaged_bugs = []
-    nova_triage_needed_bugs = []
-    for bug in nova_bugs['all']:
-        if (bug['status'] == 'New' or bug['importance'] == 'Undecided'):
-            nova_triage_needed_bugs.append(bug)
-        else:
-            nova_triaged_bugs.append(bug)
+    nova_triaged_bugs, nova_triage_needed_bugs = classify_bugs(
+        nova_bugs['all'], PRIORITY_REQUIRED_STATUSES)
+    ironic_triaged_bugs, ironic_triage_needed_bugs = classify_bugs(
+        ironic_bugs['all'], PRIORITY_REQUIRED_STATUSES)
+
     nova_triaged_bugs.sort(
         key=lambda b: (STATUS_PRIORITIES.get(b['status'], 0),
                        b['date_created']))
+    ironic_triaged_bugs.sort(
+        key=lambda b: (STATUS_PRIORITIES.get(b['status'], 0),
+                    b['date_created']))
 
-    nova_bugs['all'] = nova_triage_needed_bugs
-
-    undecided = simple_lp.search_in_results(
-        ironic_bugs,
-        importance='Undecided',
-        status=PRIORITY_REQUIRED_STATUSES)
-    undecided.sort(key=lambda b: (STATUS_PRIORITIES.get(b['status'], 0),
-                                  b['date_created']))
-
-    ironic_new_confirmed = simple_lp.search_in_results(
-        ironic_bugs, status=['New', 'Confirmed'])
-    nova_new_confirmed = simple_lp.search_in_results(
-        nova_bugs, status=['New', 'Confirmed'])
     triage_needed = simple_lp.dedup(
-        ironic_new_confirmed + nova_new_confirmed + undecided)
-    triage_needed.sort(key=lambda b: (b['status'] != 'New', b['date_created']))
+        nova_triage_needed_bugs + ironic_triage_needed_bugs)
+    triage_needed.sort(
+        key=lambda b: (b['status'] != 'New', b['date_created']))
 
     users = {}
     unassigned_in_progress = []
